@@ -246,6 +246,16 @@ impl Encoder {
                     ..Default::default()
                 });
             }
+            // Media Foundation encoder (Windows only).
+            // Covers GPUs that register an H.264 MFT (e.g. Moore Threads MTT S70).
+            // C++ layer sets hw_encoding=1 and scenario=display_remoting for _mf codecs.
+            #[cfg(windows)]
+            codecs.push(CodecInfo {
+                name: "h264_mf".to_owned(),
+                format: H264,
+                priority: Priority::Good as _,
+                ..Default::default()
+            });
             #[cfg(target_os = "linux")]
             {
                 codecs.push(CodecInfo {
