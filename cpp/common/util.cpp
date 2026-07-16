@@ -257,13 +257,9 @@ bool set_gpu(void *priv_data, const std::string &name, int gpu) {
 
 bool force_hw(void *priv_data, const std::string &name) {
   int ret;
-  if (name.find("_mf") != std::string::npos) {
-    if ((ret = av_opt_set_int(priv_data, "hw_encoding", 1, 0)) < 0) {
-      LOG_ERROR(std::string("mediafoundation set hw_encoding failed, ret = ") +
-                av_err2str(ret));
-      return false;
-    }
-  }
+  // hw_encoding=1 breaks Media Foundation encoders on GPUs that don't
+  // support D3D11VA interop (e.g. Moore Threads MTT S70). Use default (0)
+  // which lets the MF framework manage GPU resources internally.
   if (name.find("videotoolbox") != std::string::npos) {
     if ((ret = av_opt_set_int(priv_data, "allow_sw", 0, 0)) < 0) {
       LOG_ERROR(std::string("mediafoundation set allow_sw failed, ret = ") +
