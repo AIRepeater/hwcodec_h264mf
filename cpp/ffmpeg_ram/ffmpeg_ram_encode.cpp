@@ -159,8 +159,6 @@ public:
 
     int ret;
 
-    LOG_INFO("Initializing encoder: " + name_);
-
     if (!(codec = avcodec_find_encoder_by_name(name_.c_str()))) {
       LOG_ERROR(std::string("Codec ") + name_ + " not found");
       return false;
@@ -257,8 +255,6 @@ public:
                 ", name: " + name_);
       return false;
     }
-
-    LOG_INFO("Encoder initialized successfully: " + name_);
 
     if (ffmpeg_ram_get_linesize_offset_length(pixfmt_, width_, height_, align_,
                                               NULL, offset_, length) != 0)

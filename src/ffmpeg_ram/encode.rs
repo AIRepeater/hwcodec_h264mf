@@ -190,7 +190,8 @@ impl Encoder {
                 true
             };
             let (_nv, amf, _intel) = crate::common::supported_gpu(true);
-            log::info!("[hwcodec] GPU support - NV: {}, AMF: {}, Intel: {}",
+            debug!(
+                "GPU support detected - NV: {}, AMF: {}, Intel: {}",
                 _nv, amf, _intel
             );
 
@@ -316,7 +317,7 @@ impl Encoder {
                     continue;
                 }
 
-                log::info!("[hwcodec] Testing encoder: {}", codec.name);
+                debug!("Testing encoder: {}", codec.name);
 
                 let c = EncodeContext {
                     name: codec.name.clone(),
@@ -326,7 +327,7 @@ impl Encoder {
 
                 match Encoder::new(c) {
                     Ok(mut encoder) => {
-                        log::info!("[hwcodec] Encoder {} created successfully", codec.name);
+                        debug!("Encoder {} created successfully", codec.name);
                         let mut passed = false;
                         let mut last_err: Option<i32> = None;
 
@@ -371,8 +372,8 @@ impl Encoder {
                                 }
                                 Err(err) => {
                                     last_err = Some(err);
-                                    log::info!(
-                                        "[hwcodec] Encoder {} test attempt {} returned error: {}",
+                                    debug!(
+                                        "Encoder {} test attempt {} returned error: {}",
                                         codec.name,
                                         attempt + 1,
                                         err
@@ -382,23 +383,24 @@ impl Encoder {
                         }
 
                         if !passed {
-                            log::info!(
-                                "[hwcodec] Encoder {} test FAILED{}",
+                            debug!(
+                                "Encoder {} test failed after retries{}",
                                 codec.name,
-                                last_err.map(|e| format!(" (last err: {})", e)).unwrap_or_default()
+                                last_err
+                                    .map(|e| format!(" (last err: {})", e))
+                                    .unwrap_or_default()
                             );
                         }
                     }
                     Err(_) => {
-                        log::info!("[hwcodec] Failed to create encoder {}", codec.name);
+                        debug!("Failed to create encoder {}", codec.name);
                     }
                 }
             }
         } else {
-            log::info!("[hwcodec] Failed to generate dummy YUV data");
+            debug!("Failed to generate dummy YUV data");
         }
 
-        log::info!("[hwcodec] available_encoders result: {:?}", res.iter().map(|c| &c.name).collect::<Vec<_>>());
         res
     }
 
