@@ -55,7 +55,7 @@ void set_av_codec_ctx(AVCodecContext *c, const std::string &name, int kbs,
   c->color_primaries = AVCOL_PRI_SMPTE170M;
   c->color_trc = AVCOL_TRC_SMPTE170M;
 
-  if (name.find("h264") != std::string::npos) {
+  if (name.find("h264") != std::string::npos && name.find("_mf") == std::string::npos) {
     c->profile = FF_PROFILE_H264_HIGH;
   } else if (name.find("hevc") != std::string::npos) {
     c->profile = FF_PROFILE_HEVC_MAIN;
