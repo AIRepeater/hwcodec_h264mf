@@ -27,6 +27,12 @@ void set_av_codec_ctx(AVCodecContext *c, const std::string &name, int kbs,
     c->gop_size = std::numeric_limits<int16_t>::max();
   } else if (name.find("qsv") != std::string::npos) {
     c->gop_size = std::numeric_limits<uint16_t>::max();
+  } else if (name.find("_mf") != std::string::npos) {
+    // Media Foundation encoders (e.g. Moore Threads MTT S70 via h264_mf)
+    // exhibit severe bitrate collapse when GOP is set to INT_MAX.
+    // Tests show actual bitrate drops to ~5.6% of target at GOP=MAX.
+    // A safe range is 30-120; 120 is used as a reasonable default.
+    c->gop_size = 120;
   } else {
     c->gop_size = std::numeric_limits<int>::max();
   }
@@ -257,13 +263,11 @@ bool set_gpu(void *priv_data, const std::string &name, int gpu) {
 
 bool force_hw(void *priv_data, const std::string &name) {
   int ret;
-  if (name.find("_mf") != std::string::npos) {
-    if ((ret = av_opt_set_int(priv_data, "hw_encoding", 1, 0)) < 0) {
-      LOG_ERROR(std::string("mediafoundation set hw_encoding failed, ret = ") +
-                av_err2str(ret));
-      return false;
-    }
-  }
+  // NOTE: Do NOT set hw_encoding=1 for _mf (Media Foundation) codecs.
+  // On some GPU drivers (e.g. Moore Threads MTT S70), hw_encoding=1 causes
+  // "could not find any MFT for the given media type" and 100% encoder init failure.
+  // Leaving hw_encoding at its default (0) allows FFmpeg to find the
+  // hardware MFT successfully.
   if (name.find("videotoolbox") != std::string::npos) {
     if ((ret = av_opt_set_int(priv_data, "allow_sw", 0, 0)) < 0) {
       LOG_ERROR(std::string("mediafoundation set allow_sw failed, ret = ") +
