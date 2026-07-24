@@ -400,24 +400,17 @@ private:
         callback_(pkt_->data, pkt_->size, pkt_->pts,
                   pkt_->flags & AV_PKT_FLAG_KEY, obj);
         av_packet_unref(pkt_);
-        // Continue polling -- some encoders may produce multiple packets per frame
         continue;
       } else if (ret == AVERROR(EAGAIN)) {
-        // Encoder needs more input or time before producing output.
-        // Media Foundation encoders (e.g. MTT S70 h264_mf) operate in
-        // async mode and may not produce output immediately after the
-        // first input frame. Poll with a short sleep.
         av_usleep(1000); // 1ms
         continue;
       } else if (ret == AVERROR_EOF) {
-        // Encoder has been flushed, no more output.
         break;
       } else {
         LOG_ERROR(std::string("avcodec_receive_packet failed, ret = ") + av_err2str(ret));
         goto _exit;
       }
     }
-    // If we didn't get any packet and timed out, log a warning.
     if (!encoded && util::elapsed_ms(start) >= DECODE_TIMEOUT_MS) {
       LOG_WARN(std::string("encoder timed out waiting for packet after ") +
                std::to_string(DECODE_TIMEOUT_MS) + "ms, name: " + name_);

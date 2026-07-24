@@ -331,8 +331,15 @@ impl Encoder {
                         let mut passed = false;
                         let mut last_err: Option<i32> = None;
 
+                        // Media Foundation encoders (e.g. h264_mf on MTT S70)
+                        // operate in sync mode and may need multiple input
+                        // frames before producing any output. Send several
+                        // dummy frames to fill the encoder pipeline, then
+                        // check for output on subsequent attempts.
                         let max_attempts = if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
                             3
+                        } else if codec.name.contains("_mf") {
+                            5
                         } else {
                             1
                         };
