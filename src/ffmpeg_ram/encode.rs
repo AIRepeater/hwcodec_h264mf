@@ -424,44 +424,45 @@ impl Encoder {
                                 let pts = (attempt as i64) * 33;
                                 let start = std::time::Instant::now();
                                 match encoder.encode(&yuv, pts) {
-                                Ok(frames) => {
-                                    let elapsed = start.elapsed().as_millis();
+                                    Ok(frames) => {
+                                        let elapsed = start.elapsed().as_millis();
 
-                                    if frames.len() == 1 {
-                                        if frames[0].key == 1 && elapsed < TEST_TIMEOUT_MS as _ {
-                                            debug!(
-                                                "Encoder {} test passed on attempt {}",
-                                                codec.name, attempt + 1
-                                            );
-                                            res.push(codec.clone());
-                                            passed = true;
-                                            break;
+                                        if frames.len() == 1 {
+                                            if frames[0].key == 1 && elapsed < TEST_TIMEOUT_MS as _ {
+                                                debug!(
+                                                    "Encoder {} test passed on attempt {}",
+                                                    codec.name, attempt + 1
+                                                );
+                                                res.push(codec.clone());
+                                                passed = true;
+                                                break;
+                                            } else {
+                                                debug!(
+                                                    "Encoder {} test failed on attempt {} - key: {}, timeout: {}ms",
+                                                    codec.name,
+                                                    attempt + 1,
+                                                    frames[0].key,
+                                                    elapsed
+                                                );
+                                            }
                                         } else {
                                             debug!(
-                                                "Encoder {} test failed on attempt {} - key: {}, timeout: {}ms",
+                                                "Encoder {} test failed on attempt {} - wrong frame count: {}",
                                                 codec.name,
                                                 attempt + 1,
-                                                frames[0].key,
-                                                elapsed
+                                                frames.len()
                                             );
                                         }
-                                    } else {
+                                    }
+                                    Err(err) => {
+                                        last_err = Some(err);
                                         debug!(
-                                            "Encoder {} test failed on attempt {} - wrong frame count: {}",
+                                            "Encoder {} test attempt {} returned error: {}",
                                             codec.name,
                                             attempt + 1,
-                                            frames.len()
+                                            err
                                         );
                                     }
-                                }
-                                Err(err) => {
-                                    last_err = Some(err);
-                                    debug!(
-                                        "Encoder {} test attempt {} returned error: {}",
-                                        codec.name,
-                                        attempt + 1,
-                                        err
-                                    );
                                 }
                             }
                         }
