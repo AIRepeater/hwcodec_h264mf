@@ -130,6 +130,42 @@ impl Encoder {
         }
     }
 
+    /// Send a frame to the encoder without waiting for output.
+    /// Use this to feed multiple frames into encoders that buffer input
+    /// (e.g. Media Foundation MFTs in sync mode), then call
+    /// `receive_packet()` to drain the encoded output.
+    pub fn send_frame(&mut self, data: &[u8], pts: i64) -> Result<(), i32> {
+        unsafe {
+            let result = ffmpeg_ram_send_frame(
+                self.codec,
+                (*data).as_ptr(),
+                data.len() as _,
+                pts,
+            );
+            if result != 0 {
+                return Err(result);
+            }
+            Ok(())
+        }
+    }
+
+    /// Drain encoded packets from the encoder without sending new input.
+    /// Call this after `send_frame()` to collect output. Returns the
+    /// encoded frames via the internal callback buffer.
+    pub fn receive_packet(&mut self) -> Result<&mut Vec<EncodeFrame>, i32> {
+        unsafe {
+            (&mut *self.frames).clear();
+            let result = ffmpeg_ram_receive_packet(
+                self.codec,
+                self.frames as *const _ as *const c_void,
+            );
+            if result != 0 {
+                return Err(result);
+            }
+            Ok(&mut *self.frames)
+        }
+    }
+
     extern "C" fn callback(data: *const u8, size: c_int, pts: i64, key: i32, obj: *const c_void) {
         unsafe {
             let frames = &mut *(obj as *mut Vec<EncodeFrame>);
@@ -331,22 +367,63 @@ impl Encoder {
                         let mut passed = false;
                         let mut last_err: Option<i32> = None;
 
-                        // Media Foundation encoders (e.g. h264_mf on MTT S70)
-                        // operate in sync mode and may need multiple input
-                        // frames before producing any output. Send several
-                        // dummy frames to fill the encoder pipeline, then
-                        // check for output on subsequent attempts.
-                        let max_attempts = if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
-                            3
-                        } else if codec.name.contains("_mf") {
-                            5
+                        if codec.name.contains("_mf") {
+                            // Media Foundation encoders operate in sync mode
+                            // (hw_encoding=0, so async events are disabled).
+                            // In sync mode the MFT may return
+                            // MF_E_TRANSFORM_NEED_MORE_INPUT after each
+                            // ProcessOutput, which FFmpeg translates to
+                            // AVERROR(EAGAIN).  The correct FFmpeg CLI
+                            // behaviour is: send another frame, then try
+                            // receiving again.  We replicate that here.
+                            let max_send = 30; // enough to fill any MFT pipeline
+                            for i in 0..max_send {
+                                let pts = (i as i64) * 33;
+                                if let Err(e) = encoder.send_frame(&yuv, pts) {
+                                    last_err = Some(e);
+                                    debug!(
+                                        "Encoder {} send_frame {} failed: {}",
+                                        codec.name, i + 1, e
+                                    );
+                                    break;
+                                }
+                                match encoder.receive_packet() {
+                                    Ok(frames) => {
+                                        if frames.len() == 1 && frames[0].key == 1 {
+                                            debug!(
+                                                "Encoder {} test passed on frame {}",
+                                                codec.name, i + 1
+                                            );
+                                            res.push(codec.clone());
+                                            passed = true;
+                                        }
+                                        // Got output; stop the send loop even
+                                        // if it wasn't a keyframe (we got
+                                        // confirmation the encoder works).
+                                        break;
+                                    }
+                                    Err(e) => {
+                                        if e != -1 { // -1 = AVERROR(EAGAIN), expected
+                                            last_err = Some(e);
+                                            debug!(
+                                                "Encoder {} receive_packet after frame {} failed: {}",
+                                                codec.name, i + 1, e
+                                            );
+                                        }
+                                        // EAGAIN: need more input, loop continues
+                                    }
+                                }
+                            }
                         } else {
-                            1
-                        };
-                        for attempt in 0..max_attempts {
-                            let pts = (attempt as i64) * 33; // 33ms is an approximation for 30 FPS (1000 / 30)
-                            let start = std::time::Instant::now();
-                            match encoder.encode(&yuv, pts) {
+                            let max_attempts = if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+                                3
+                            } else {
+                                1
+                            };
+                            for attempt in 0..max_attempts {
+                                let pts = (attempt as i64) * 33;
+                                let start = std::time::Instant::now();
+                                match encoder.encode(&yuv, pts) {
                                 Ok(frames) => {
                                     let elapsed = start.elapsed().as_millis();
 

@@ -327,6 +327,84 @@ public:
     return do_encode(tmp_frame, obj, ms);
   }
 
+  // send_frame: fill the internal frame with data and send to the encoder
+  // via avcodec_send_frame, WITHOUT entering the receive loop.
+  // Use this to feed multiple frames into encoders that buffer input
+  // (e.g. Media Foundation MFTs in sync mode).  Follow with one or more
+  // calls to receive_packet() to drain output.
+  int send_frame(const uint8_t *data, int length, int64_t pts) {
+    int ret;
+
+    if ((ret = av_frame_make_writable(frame_)) != 0) {
+      LOG_ERROR(std::string("send_frame: av_frame_make_writable failed, ret = ") +
+                av_err2str(ret));
+      return ret;
+    }
+    if ((ret = fill_frame(frame_, (uint8_t *)data, length, offset_)) != 0)
+      return ret;
+    frame_->pts = pts;
+
+    if (hw_device_type_ != AV_HWDEVICE_TYPE_NONE) {
+      if ((ret = av_hwframe_transfer_data(hw_frame_, frame_, 0)) < 0) {
+        LOG_ERROR(std::string("send_frame: av_hwframe_transfer_data failed, ret = ") +
+                  av_err2str(ret));
+        return ret;
+      }
+      ret = avcodec_send_frame(c_, hw_frame_);
+    } else {
+      ret = avcodec_send_frame(c_, frame_);
+    }
+    if (ret < 0) {
+      LOG_ERROR(std::string("send_frame: avcodec_send_frame failed, ret = ") +
+                av_err2str(ret));
+    }
+    return ret;
+  }
+
+  // receive_packet: drain encoded packets from the encoder without
+  // sending any new input.  Returns 0 on success (pkt delivered via
+  // callback), AVERROR(EAGAIN) when more input is needed, or another
+  // negative error code on failure.
+  int receive_packet(const void *obj) {
+    int ret;
+    bool got_packet = false;
+
+    auto start = util::now();
+    while (util::elapsed_ms(start) < DECODE_TIMEOUT_MS) {
+      ret = avcodec_receive_packet(c_, pkt_);
+      if (ret == 0) {
+        if (!pkt_->data || !pkt_->size) {
+          LOG_ERROR("receive_packet: pkt size is 0");
+          continue;
+        }
+        got_packet = true;
+        callback_(pkt_->data, pkt_->size, pkt_->pts,
+                  pkt_->flags & AV_PKT_FLAG_KEY, obj);
+        av_packet_unref(pkt_);
+        continue;
+      } else if (ret == AVERROR(EAGAIN)) {
+        // No output available yet. If we already got at least one
+        // packet we can stop; otherwise keep waiting briefly.
+        if (got_packet)
+          break;
+        av_usleep(1000);
+        continue;
+      } else if (ret == AVERROR_EOF) {
+        break;
+      } else {
+        LOG_ERROR(std::string("receive_packet: avcodec_receive_packet failed, ret = ") +
+                  av_err2str(ret));
+        return ret;
+      }
+    }
+    if (!got_packet && util::elapsed_ms(start) >= DECODE_TIMEOUT_MS) {
+      LOG_WARN(std::string("receive_packet: timed out after ") +
+               std::to_string(DECODE_TIMEOUT_MS) + "ms, name: " + name_);
+      return AVERROR(EAGAIN);
+    }
+    return got_packet ? 0 : AVERROR(EAGAIN);
+  }
+
   void free_encoder() {
     if (pkt_)
       av_packet_free(&pkt_);
@@ -494,6 +572,27 @@ extern "C" int ffmpeg_ram_encode(FFmpegRamEncoder *encoder, const uint8_t *data,
     return encoder->encode(data, length, obj, ms);
   } catch (const std::exception &e) {
     LOG_ERROR(std::string("ffmpeg_ram_encode failed, ") + std::string(e.what()));
+  }
+  return -1;
+}
+
+extern "C" int ffmpeg_ram_send_frame(FFmpegRamEncoder *encoder,
+                                     const uint8_t *data, int length,
+                                     int64_t pts) {
+  try {
+    return encoder->send_frame(data, length, pts);
+  } catch (const std::exception &e) {
+    LOG_ERROR(std::string("ffmpeg_ram_send_frame failed, ") + std::string(e.what()));
+  }
+  return -1;
+}
+
+extern "C" int ffmpeg_ram_receive_packet(FFmpegRamEncoder *encoder,
+                                         const void *obj) {
+  try {
+    return encoder->receive_packet(obj);
+  } catch (const std::exception &e) {
+    LOG_ERROR(std::string("ffmpeg_ram_receive_packet failed, ") + std::string(e.what()));
   }
   return -1;
 }
