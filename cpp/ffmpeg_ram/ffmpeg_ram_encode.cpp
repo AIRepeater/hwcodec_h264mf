@@ -19,6 +19,7 @@ extern "C" {
 #include <util.h>
 #ifdef _WIN32
 #include "win.h"
+#include <combaseapi.h>
 #endif
 
 static int calculate_offset_length(int pix_fmt, int height, const int *linesize,
@@ -121,6 +122,9 @@ public:
   AVPixelFormat hw_pixfmt_ = AV_PIX_FMT_NONE;
   AVBufferRef *hw_device_ctx_ = NULL;
   AVFrame *hw_frame_ = NULL;
+#ifdef _WIN32
+  bool com_initialized_ = false;
+#endif
 
   FFmpegRamEncoder(const char *name, const char *mc_name, int width, int height,
                    int pixfmt, int align, int fps, int gop, int rc, int quality,
@@ -158,6 +162,29 @@ public:
     const AVCodec *codec = NULL;
 
     int ret;
+
+#ifdef _WIN32
+    // Media Foundation encoders (e.g. h264_mf) require COM to be initialized.
+    // FFmpeg's mfenc.c calls MFStartup() which requires CoInitializeEx() on the
+    // calling thread. Without explicit COM init, MFStartup may fail silently
+    // on certain configurations (e.g. MSVC builds with --disable-everything).
+    if (name_.find("_mf") != std::string::npos) {
+      HRESULT hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+      if (hr == RPC_E_CHANGED_MODE) {
+        // COM was already initialized with a different threading model.
+        // Try single-threaded apartment as fallback.
+        hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+      }
+      if (SUCCEEDED(hr)) {
+        com_initialized_ = (hr == S_OK); // only uninit if we were the first
+      } else {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "0x%08lx", (unsigned long)hr);
+        LOG_WARN(std::string("CoInitializeEx failed, hr=") + buf +
+                 ", MF encoder may fail");
+      }
+    }
+#endif
 
     if (!(codec = avcodec_find_encoder_by_name(name_.c_str()))) {
       LOG_ERROR(std::string("Codec ") + name_ + " not found");
@@ -253,8 +280,17 @@ public:
     if ((ret = avcodec_open2(c_, codec, NULL)) < 0) {
       LOG_ERROR(std::string("avcodec_open2 failed, ret = ") + av_err2str(ret) +
                 ", name: " + name_);
+      if (name_.find("_mf") != std::string::npos) {
+        LOG_INFO("_mf encoder init failed — check COM init, driver MFT, "
+                 "and that hw_encoding is not set to 1");
+      }
       return false;
     }
+
+    LOG_INFO(std::string("encoder opened: ") + name_ + ", pixfmt=" +
+             std::to_string(pixfmt_) + ", " + std::to_string(width_) + "x" +
+             std::to_string(height_) + ", kbs=" + std::to_string(kbs_) +
+             ", gop=" + std::to_string(c_->gop_size));
 
     if (ffmpeg_ram_get_linesize_offset_length(pixfmt_, width_, height_, align_,
                                               NULL, offset_, length) != 0)
@@ -301,6 +337,12 @@ public:
       av_buffer_unref(&hw_device_ctx_);
     if (c_)
       avcodec_free_context(&c_);
+#ifdef _WIN32
+    if (com_initialized_) {
+      CoUninitialize();
+      com_initialized_ = false;
+    }
+#endif
   }
 
   int set_bitrate(int kbs) {

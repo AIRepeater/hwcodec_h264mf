@@ -33,6 +33,8 @@ void set_av_codec_ctx(AVCodecContext *c, const std::string &name, int kbs,
     // Tests show actual bitrate drops to ~5.6% of target at GOP=MAX.
     // A safe range is 30-120; 120 is used as a reasonable default.
     c->gop_size = 120;
+    LOG_INFO("_mf encoder: GOP capped at 120 (original: " +
+             std::to_string(gop) + ")");
   } else {
     c->gop_size = std::numeric_limits<int>::max();
   }
@@ -63,6 +65,10 @@ void set_av_codec_ctx(AVCodecContext *c, const std::string &name, int kbs,
 
   if (name.find("h264") != std::string::npos && name.find("_mf") == std::string::npos) {
     c->profile = FF_PROFILE_H264_HIGH;
+  } else if (name.find("h264") != std::string::npos) {
+    // _mf encoders: do not set explicit H264 profile — some MFTs
+    // (e.g. MTT S70) reject the encoder when a profile is forced.
+    LOG_INFO("_mf encoder: H264 profile left at default (MFT compatibility)");
   } else if (name.find("hevc") != std::string::npos) {
     c->profile = FF_PROFILE_HEVC_MAIN;
   }
@@ -267,7 +273,11 @@ bool force_hw(void *priv_data, const std::string &name) {
   // On some GPU drivers (e.g. Moore Threads MTT S70), hw_encoding=1 causes
   // "could not find any MFT for the given media type" and 100% encoder init failure.
   // Leaving hw_encoding at its default (0) allows FFmpeg to find the
-  // hardware MFT successfully.
+  // hardware MFT successfully via software-memory input path.
+  if (name.find("_mf") != std::string::npos) {
+    LOG_INFO("_mf encoder: skipping hw_encoding=1 (uses system-memory MF path)");
+    return true;
+  }
   if (name.find("videotoolbox") != std::string::npos) {
     if ((ret = av_opt_set_int(priv_data, "allow_sw", 0, 0)) < 0) {
       LOG_ERROR(std::string("mediafoundation set allow_sw failed, ret = ") +
@@ -287,6 +297,7 @@ bool set_others(void *priv_data, const std::string &name) {
                 av_err2str(ret));
       return false;
     }
+    LOG_INFO("_mf encoder: scenario set to display_remoting (1)");
   }
   if (name.find("vaapi") != std::string::npos) {
     if ((ret = av_opt_set_int(priv_data, "idr_interval",
