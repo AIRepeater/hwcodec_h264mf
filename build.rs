@@ -287,6 +287,21 @@ mod sdk {
         build_amf(builder);
         build_nv(builder);
         build_mfx(builder);
+        #[cfg(target_arch = "x86_64")]
+        build_mt(builder);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    fn build_mt(builder: &mut Build) {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let mt_dir = manifest_dir.join("cpp").join("mt");
+        bindgen::builder()
+            .header(mt_dir.join("mt_ffi.h").to_string_lossy().to_string())
+            .generate()
+            .unwrap()
+            .write_to_file(Path::new(&env::var_os("OUT_DIR").unwrap()).join("mt_ffi.rs"))
+            .unwrap();
+        builder.file(mt_dir.join("mt_encode.cpp"));
     }
 
     fn build_nv(builder: &mut Build) {

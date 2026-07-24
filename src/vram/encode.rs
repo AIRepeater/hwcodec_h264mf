@@ -5,6 +5,8 @@ use crate::{
         amf, ffmpeg, inner::EncodeCalls, mfx, nv, DynamicContext, EncodeContext, FeatureContext,
     },
 };
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+use crate::vram::mt;
 use log::trace;
 use std::{
     fmt::Display, os::raw::{c_int, c_void}, slice::from_raw_parts
@@ -31,6 +33,10 @@ impl Encoder {
             AMF => amf::encode_calls(),
             MFX => mfx::encode_calls(),
             FFMPEG => ffmpeg::encode_calls(),
+            #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+            MT => mt::encode_calls(),
+            #[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
+            MT => return Err(()),
         };
         unsafe {
             let codec = (calls.new)(
@@ -154,6 +160,13 @@ pub fn available(d: DynamicContext) -> Vec<FeatureContext> {
             .map(|n| (MFX, n))
             .collect(),
     );
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    natives.append(
+        &mut mt::possible_support_encoders()
+            .drain(..)
+            .map(|n| (MT, n))
+            .collect(),
+    );
     let inputs: Vec<EncodeContext> = natives
         .drain(..)
         .map(|(driver, n)| EncodeContext {
@@ -181,6 +194,10 @@ pub fn available(d: DynamicContext) -> Vec<FeatureContext> {
             AMF => amf::encode_calls().test,
             MFX => mfx::encode_calls().test,
             FFMPEG => ffmpeg::encode_calls().test,
+            #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+            MT => mt::encode_calls().test,
+            #[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
+            MT => continue,
         };
 
         let mut luids: Vec<i64> = vec![0; crate::vram::MAX_ADATERS];
@@ -223,6 +240,7 @@ pub fn available(d: DynamicContext) -> Vec<FeatureContext> {
                         0 => NV,
                         1 => AMF,
                         2 => MFX,
+                        4 => MT,
                         _ => {
                             log::error!(
                                 "Unexpected vendor value encountered: {}. Skipping.",

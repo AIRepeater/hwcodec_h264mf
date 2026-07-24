@@ -4,6 +4,8 @@ pub mod encode;
 pub(crate) mod ffmpeg;
 mod inner;
 pub(crate) mod mfx;
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+pub(crate) mod mt;
 pub(crate) mod nv;
 
 pub(crate) const MAX_ADATERS: usize = 16;

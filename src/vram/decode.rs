@@ -32,6 +32,7 @@ impl Decoder {
             AMF => amf::decode_calls(),
             MFX => mfx::decode_calls(),
             FFMPEG => ffmpeg::decode_calls(),
+            MT => return Err(()),
         };
         unsafe {
             let codec = (calls.new)(
@@ -159,6 +160,7 @@ pub fn available() -> Vec<DecodeContext> {
             AMF => amf::decode_calls().test,
             MFX => mfx::decode_calls().test,
             FFMPEG => ffmpeg::decode_calls().test,
+            MT => continue,
         };
 
         let mut luids: Vec<i64> = vec![0; crate::vram::MAX_ADATERS];
@@ -207,6 +209,7 @@ pub fn available() -> Vec<DecodeContext> {
                         0 => NV,
                         1 => AMF,
                         2 => MFX,
+                        4 => MT,
                         _ => {
                             log::error!(
                                 "Unexpected vendor value encountered: {}. Skipping.",

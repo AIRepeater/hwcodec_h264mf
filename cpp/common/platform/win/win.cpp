@@ -529,6 +529,8 @@ AdapterVendor NativeDevice::GetVendor() {
     return ADAPTER_VENDOR_AMD;
   } else if (desc1.VendorId == ADAPTER_VENDOR_INTEL) {
     return ADAPTER_VENDOR_INTEL;
+  } else if (desc1.VendorId == ADAPTER_VENDOR_MT) {
+    return ADAPTER_VENDOR_MT;
   } else {
     return ADAPTER_VENDOR_UNKNOWN;
   }
@@ -720,7 +722,8 @@ uint64_t GetHwcodecGpuSignature() {
     if (SUCCEEDED(tmpAdapter->GetDesc1(&desc))) {
       if (desc.VendorId == ADAPTER_VENDOR_NVIDIA ||
           desc.VendorId == ADAPTER_VENDOR_AMD ||
-          desc.VendorId == ADAPTER_VENDOR_INTEL) {
+          desc.VendorId == ADAPTER_VENDOR_INTEL ||
+          desc.VendorId == ADAPTER_VENDOR_MT) {
         // hardware
         signature += desc.VendorId;
         signature += desc.DeviceId;

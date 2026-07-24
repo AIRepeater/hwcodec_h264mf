@@ -12,6 +12,7 @@
 enum AdapterVendor {
   ADAPTER_VENDOR_AMD = 0x1002,
   ADAPTER_VENDOR_INTEL = 0x8086,
+  ADAPTER_VENDOR_MT = 0x1ED5,
   ADAPTER_VENDOR_NVIDIA = 0x10DE,
   ADAPTER_VENDOR_UNKNOWN = 0,
 };
@@ -35,7 +36,8 @@ enum Vendor {
   VENDOR_NV = 0,
   VENDOR_AMD = 1,
   VENDOR_INTEL = 2,
-  VENDOR_FFMPEG = 3
+  VENDOR_FFMPEG = 3,
+  VENDOR_MT = 4
 };
 
 enum Quality { Quality_Default, Quality_High, Quality_Medium, Quality_Low };

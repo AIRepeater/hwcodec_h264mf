@@ -14,6 +14,7 @@ pub enum Driver {
     AMF,
     MFX,
     FFMPEG,
+    MT,
 }
 
 #[cfg(any(windows, target_os = "linux"))]
