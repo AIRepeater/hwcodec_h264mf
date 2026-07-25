@@ -7,7 +7,7 @@ use crate::{
     ffmpeg_ram::{
         ffmpeg_linesize_offset_length, ffmpeg_ram_encode, ffmpeg_ram_free_encoder,
         ffmpeg_ram_new_encoder, ffmpeg_ram_receive_packet, ffmpeg_ram_send_frame,
-        ffmpeg_ram_set_bitrate, CodecInfo, AV_NUM_DATA_POINTERS,
+        ffmpeg_ram_set_bitrate, ffmpeg_ram_try_receive_packet, CodecInfo, AV_NUM_DATA_POINTERS,
     },
 };
 use log::trace;
@@ -161,6 +161,54 @@ impl Encoder {
                 self.frames as *const _ as *const c_void,
             );
             if result != 0 {
+                return Err(result);
+            }
+            Ok(&mut *self.frames)
+        }
+    }
+
+    /// Non-blocking attempt to drain encoded packets.
+    /// Returns Ok(frames) if output was produced (frames may be empty
+    /// if the encoder is still buffering), or Err(code) on real errors.
+    /// EAGAIN (-11 on Windows) is returned as Err to indicate "no output yet".
+    pub fn try_receive_packet(&mut self) -> Result<&mut Vec<EncodeFrame>, i32> {
+        unsafe {
+            (&mut *self.frames).clear();
+            let result = ffmpeg_ram_try_receive_packet(
+                self.codec,
+                self.frames as *const _ as *const c_void,
+            );
+            if result != 0 {
+                return Err(result);
+            }
+            Ok(&mut *self.frames)
+        }
+    }
+
+    /// Encode using send_frame + non-blocking try_receive_packet.
+    /// Designed for Media Foundation encoders (e.g. h264_mf) whose MFT
+    /// buffers multiple frames before producing output.
+    /// Returns Ok(frames) with encoded data, or Ok(empty) if the encoder
+    /// is still buffering (EAGAIN), or Err(code) on real errors.
+    pub fn encode_send_recv(&mut self, data: &[u8], pts: i64) -> Result<&mut Vec<EncodeFrame>, i32> {
+        unsafe {
+            (&mut *self.frames).clear();
+            let result = ffmpeg_ram_send_frame(
+                self.codec,
+                (*data).as_ptr(),
+                data.len() as _,
+                pts,
+            );
+            if result != 0 {
+                return Err(result);
+            }
+            let result = ffmpeg_ram_try_receive_packet(
+                self.codec,
+                self.frames as *const _ as *const c_void,
+            );
+            if result != 0 {
+                // EAGAIN means encoder is buffering, not a fatal error.
+                // Return empty frames to signal "no output yet".
                 return Err(result);
             }
             Ok(&mut *self.frames)
@@ -369,14 +417,11 @@ impl Encoder {
                         let mut last_err: Option<i32> = None;
 
                         if codec.name.contains("_mf") {
-                            // Media Foundation encoders operate in sync mode
-                            // (hw_encoding=0, so async events are disabled).
-                            // In sync mode the MFT may return
-                            // MF_E_TRANSFORM_NEED_MORE_INPUT after each
-                            // ProcessOutput, which FFmpeg translates to
-                            // AVERROR(EAGAIN).  The correct FFmpeg CLI
-                            // behaviour is: send another frame, then try
-                            // receiving again.  We replicate that here.
+                            // Media Foundation encoders (e.g. h264_mf on
+                            // Moore Threads MTT S70) buffer multiple frames
+                            // internally before producing output.  Use the
+                            // non-blocking try_receive_packet() to avoid
+                            // 1-second timeouts per frame during probing.
                             let max_send = 30; // enough to fill any MFT pipeline
                             for i in 0..max_send {
                                 let pts = (i as i64) * 33;
@@ -388,9 +433,9 @@ impl Encoder {
                                     );
                                     break;
                                 }
-                                match encoder.receive_packet() {
+                                match encoder.try_receive_packet() {
                                     Ok(frames) => {
-                                        if frames.len() == 1 && frames[0].key == 1 {
+                                        if !frames.is_empty() && frames[0].key == 1 {
                                             debug!(
                                                 "Encoder {} test passed on frame {}",
                                                 codec.name, i + 1
@@ -403,15 +448,9 @@ impl Encoder {
                                         // confirmation the encoder works).
                                         break;
                                     }
-                                    Err(e) => {
-                                        if e != -1 { // -1 = AVERROR(EAGAIN), expected
-                                            last_err = Some(e);
-                                            debug!(
-                                                "Encoder {} receive_packet after frame {} failed: {}",
-                                                codec.name, i + 1, e
-                                            );
-                                        }
-                                        // EAGAIN: need more input, loop continues
+                                    Err(_e) => {
+                                        // EAGAIN or other: encoder needs more
+                                        // input. Loop continues to send next frame.
                                     }
                                 }
                             }

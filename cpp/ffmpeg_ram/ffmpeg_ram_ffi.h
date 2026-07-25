@@ -25,6 +25,7 @@ int ffmpeg_ram_encode(void *encoder, const uint8_t *data, int length,
 int ffmpeg_ram_send_frame(void *encoder, const uint8_t *data, int length,
                           int64_t pts);
 int ffmpeg_ram_receive_packet(void *encoder, const void *obj);
+int ffmpeg_ram_try_receive_packet(void *encoder, const void *obj);
 int ffmpeg_ram_decode(void *decoder, const uint8_t *data, int length,
                       const void *obj);
 void ffmpeg_ram_free_encoder(void *encoder);

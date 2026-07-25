@@ -405,6 +405,43 @@ public:
     return got_packet ? 0 : AVERROR(EAGAIN);
   }
 
+  // try_receive_packet: non-blocking single attempt to drain encoded
+  // packets.  Returns 0 if at least one packet was delivered via
+  // callback, AVERROR(EAGAIN) if the encoder needs more input, or
+  // another negative error code on failure.
+  // This is designed for Media Foundation encoders (e.g. h264_mf on
+  // Moore Threads MTT S70) whose MFT buffers multiple frames before
+  // producing output.  The caller should use send_frame() +
+  // try_receive_packet() in a send/receive pattern.
+  int try_receive_packet(const void *obj) {
+    int ret;
+    bool got_packet = false;
+
+    // Drain all currently available packets (non-blocking).
+    while (true) {
+      ret = avcodec_receive_packet(c_, pkt_);
+      if (ret == 0) {
+        if (!pkt_->data || !pkt_->size) {
+          av_packet_unref(pkt_);
+          continue;
+        }
+        got_packet = true;
+        callback_(pkt_->data, pkt_->size, pkt_->pts,
+                  pkt_->flags & AV_PKT_FLAG_KEY, obj);
+        av_packet_unref(pkt_);
+      } else if (ret == AVERROR(EAGAIN)) {
+        break;
+      } else if (ret == AVERROR_EOF) {
+        break;
+      } else {
+        LOG_ERROR(std::string("try_receive_packet: avcodec_receive_packet failed, ret = ") +
+                  av_err2str(ret));
+        return ret;
+      }
+    }
+    return got_packet ? 0 : AVERROR(EAGAIN);
+  }
+
   void free_encoder() {
     if (pkt_)
       av_packet_free(&pkt_);
@@ -593,6 +630,16 @@ extern "C" int ffmpeg_ram_receive_packet(FFmpegRamEncoder *encoder,
     return encoder->receive_packet(obj);
   } catch (const std::exception &e) {
     LOG_ERROR(std::string("ffmpeg_ram_receive_packet failed, ") + std::string(e.what()));
+  }
+  return -1;
+}
+
+extern "C" int ffmpeg_ram_try_receive_packet(FFmpegRamEncoder *encoder,
+                                             const void *obj) {
+  try {
+    return encoder->try_receive_packet(obj);
+  } catch (const std::exception &e) {
+    LOG_ERROR(std::string("ffmpeg_ram_try_receive_packet failed, ") + std::string(e.what()));
   }
   return -1;
 }

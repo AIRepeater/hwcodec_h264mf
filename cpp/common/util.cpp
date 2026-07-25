@@ -51,8 +51,19 @@ void set_av_codec_ctx(AVCodecContext *c, const std::string &name, int kbs,
   /* frames per second */
   c->time_base = av_make_q(1, 1000);
   c->framerate = av_make_q(fps, 1);
-  c->flags |= AV_CODEC_FLAG2_LOCAL_HEADER;
-  c->flags |= AV_CODEC_FLAG_LOW_DELAY;
+  if (name.find("_mf") == std::string::npos) {
+    // AV_CODEC_FLAG2_LOCAL_HEADER: MF encoders do NOT support this flag.
+    // They provide SPS/PPS via extradata (MF_MT_MPEG_SEQUENCE_HEADER) and
+    // do not insert them into each keyframe. Setting this flag causes
+    // decoders to fail due to missing parameter sets.
+    c->flags |= AV_CODEC_FLAG2_LOCAL_HEADER;
+    // AV_CODEC_FLAG_LOW_DELAY: triggers CODECAPI_AVLowLatencyMode in mfenc.c.
+    // MTT S70 MFT does not properly respond to this and it may cause
+    // excessive frame buffering. Skip for _mf encoders.
+    c->flags |= AV_CODEC_FLAG_LOW_DELAY;
+  } else {
+    LOG_INFO("_mf encoder: skipping LOCAL_HEADER and LOW_DELAY flags");
+  }
   c->slices = 1;
   c->thread_type = FF_THREAD_SLICE;
   c->thread_count = c->slices;
