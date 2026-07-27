@@ -220,6 +220,10 @@ public:
     picture.input_duration = static_cast<uint64_t>(1000 / framerate_);
 
     status = api_.encode_frame(encoder_, &picture);
+    if (status == mtapi::ERR_ENCODER_BUSY) {
+      unmap_slot(slot);
+      return -2;
+    }
     if (status != mtapi::SUCCESS && status != mtapi::ERR_NEED_MORE_INPUT) {
       log_status("mtEncEncodeFrame", status);
       unmap_slot(slot);
@@ -229,6 +233,7 @@ public:
     pending_.push_back(slot);
     next_slot_ = (next_slot_ + 1) % BUFFER_COUNT;
     if (status == mtapi::ERR_NEED_MORE_INPUT) {
+      LOG_WARN(std::string("mtEncEncodeFrame returned ERR_NEED_MORE_INPUT in IPPP mode"));
       return -2;
     }
 
@@ -236,7 +241,11 @@ public:
   }
 
   int set_bitrate(int32_t kbs) {
-    if (!initialized_ || kbs <= 0 || !pending_.empty()) {
+    if (!initialized_ || kbs <= 0) {
+      return -1;
+    }
+    if (!pending_.empty()) {
+      LOG_WARN(std::string("set_bitrate skipped: pending frames not empty"));
       return -1;
     }
     uint32_t old_average = config_.rc.average_bit_rate;
@@ -252,7 +261,11 @@ public:
   }
 
   int set_framerate(int32_t framerate) {
-    if (!initialized_ || framerate <= 0 || !pending_.empty()) {
+    if (!initialized_ || framerate <= 0) {
+      return -1;
+    }
+    if (!pending_.empty()) {
+      LOG_WARN(std::string("set_framerate skipped: pending frames not empty"));
       return -1;
     }
     uint32_t old_framerate = init_params_.frame_rate_num;

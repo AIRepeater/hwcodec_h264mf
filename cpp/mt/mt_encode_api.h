@@ -15,6 +15,7 @@ constexpr uint32_t API_VERSION = 0x01020000;
 constexpr uint32_t INFINITE_GOP_LENGTH = 0xFFFF;
 
 constexpr Status SUCCESS = 0;
+constexpr Status ERR_ENCODER_BUSY = 8;
 constexpr Status ERR_NEED_MORE_INPUT = 9;
 
 constexpr uint32_t CODEC_H264 = 0x1;

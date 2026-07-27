@@ -107,6 +107,23 @@ impl Encoder {
             }
         }
     }
+
+    pub fn reinit(&mut self) -> bool {
+        unsafe {
+            (self.calls.destroy)(self.codec);
+            self.codec = (self.calls.new)(
+                self.ctx.d.device.unwrap_or(std::ptr::null_mut()),
+                self.ctx.f.luid,
+                self.ctx.f.data_format as i32,
+                self.ctx.d.width,
+                self.ctx.d.height,
+                self.ctx.d.kbitrate,
+                self.ctx.d.framerate,
+                self.ctx.d.gop,
+            );
+            !self.codec.is_null()
+        }
+    }
 }
 
 impl Drop for Encoder {
@@ -120,7 +137,6 @@ impl Drop for Encoder {
     }
 }
 
-#[derive(Clone)]
 pub struct EncodeFrame {
     pub data: Vec<u8>,
     pub pts: i64,
