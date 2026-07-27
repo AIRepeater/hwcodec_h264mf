@@ -229,7 +229,7 @@ public:
     pending_.push_back(slot);
     next_slot_ = (next_slot_ + 1) % BUFFER_COUNT;
     if (status == mtapi::ERR_NEED_MORE_INPUT) {
-      return 0;
+      return -2;
     }
 
     return collect_one(callback, obj);
@@ -354,7 +354,7 @@ private:
 
   int collect_one(EncodeCallback callback, void *obj) {
     if (pending_.empty()) {
-      return -1;
+      return -2;
     }
 
     size_t slot = pending_.front();
@@ -362,7 +362,9 @@ private:
     if (wait_result != WAIT_OBJECT_0) {
       LOG_ERROR(std::string("Waiting for MTEncode completion failed, result=") +
                 std::to_string(wait_result));
-      return -1;
+      unmap_slot(slot);
+      pending_.pop_front();
+      return -2;
     }
 
     mtapi::LockBuffer lock = {};
@@ -371,10 +373,12 @@ private:
     mtapi::Status status = api_.lock_output_buffer(encoder_, &lock);
     if (status != mtapi::SUCCESS) {
       log_status("mtEncLockOutputBuffer", status);
-      return -1;
+      unmap_slot(slot);
+      pending_.pop_front();
+      return -2;
     }
 
-    int result = -1;
+    int result = -2;
     if (lock.output_buffer_ptr && lock.output_size > 0 &&
         lock.output_size <= static_cast<uint32_t>(
                                 std::numeric_limits<int32_t>::max())) {
@@ -394,7 +398,6 @@ private:
       status = api_.unlock_output_buffer(encoder_, lock.locked_output_buffer);
       if (status != mtapi::SUCCESS) {
         log_status("mtEncUnlockOutputBuffer", status);
-        result = -1;
       }
     }
     unmap_slot(slot);

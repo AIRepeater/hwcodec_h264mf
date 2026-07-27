@@ -120,6 +120,7 @@ impl Drop for Encoder {
     }
 }
 
+#[derive(Clone)]
 pub struct EncodeFrame {
     pub data: Vec<u8>,
     pub pts: i64,
