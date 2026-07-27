@@ -19,9 +19,12 @@ constexpr Status ERR_ENCODER_BUSY = 8;
 constexpr Status ERR_NEED_MORE_INPUT = 9;
 
 constexpr uint32_t CODEC_H264 = 0x1;
+constexpr uint32_t CODEC_HEVC = 0x2;
 constexpr uint32_t PROFILE_MAIN_H264 = 0x3;
+constexpr uint32_t PROFILE_MAIN_HEVC = 0x10;
 constexpr uint32_t PRESET_DEFAULT = 0x1;
 constexpr uint32_t RC_CBR = 0x1;
+constexpr uint32_t TIER_HEVC_MAIN = 0x0;
 
 constexpr uint32_t PIC_TYPE_I = 0x0;
 constexpr uint32_t PIC_TYPE_IDR = 0x3;
@@ -74,9 +77,21 @@ struct H264Config {
   void *reserved2[64];
 };
 
+struct HevcConfig {
+  uint32_t level;
+  uint32_t tier;
+  uint32_t idr_period;
+  uint32_t pixel_bit_depth_and_reserved;
+  H264VuiParams vui;
+  uint32_t reserved1[224];
+  void *reserved2[64];
+};
+
 struct CodecConfig {
   H264Config h264;
-  uint8_t remaining_codec_data[9216];
+  HevcConfig hevc;
+  uint32_t reserved1[1280];
+  void *reserved2[320];
 };
 
 struct Config {
@@ -226,8 +241,12 @@ static_assert(sizeof(Status) == 4, "Unexpected MTEncode status ABI layout");
 static_assert(sizeof(RcParams) == 768, "Unexpected MTEncode RC ABI layout");
 static_assert(sizeof(H264Config) == 1536,
               "Unexpected MTEncode H.264 ABI layout");
+static_assert(sizeof(HevcConfig) == 1536,
+              "Unexpected MTEncode HEVC ABI layout");
 static_assert(sizeof(CodecConfig) == 10752,
               "Unexpected MTEncode codec ABI layout");
+static_assert(offsetof(CodecConfig, hevc) == 1536,
+              "Unexpected MTEncode HEVC ABI offset");
 static_assert(sizeof(Config) == 13056,
               "Unexpected MTEncode config ABI layout");
 static_assert(sizeof(InitParams) == 1536,

@@ -5,7 +5,7 @@
 include!(concat!(env!("OUT_DIR"), "/mt_ffi.rs"));
 
 use crate::{
-    common::DataFormat::H264,
+    common::DataFormat::{H264, H265},
     vram::inner::{EncodeCalls, InnerEncodeContext},
 };
 
@@ -24,5 +24,5 @@ pub fn possible_support_encoders() -> Vec<InnerEncodeContext> {
     if unsafe { mt_encode_driver_support() } != 0 {
         return vec![];
     }
-    vec![InnerEncodeContext { format: H264 }]
+    vec![InnerEncodeContext { format: H264 }, InnerEncodeContext { format: H265 }]
 }

@@ -96,11 +96,11 @@ bool load_api(HMODULE &module, mtapi::FunctionList &api, bool log_errors) {
 
 class MtEncoder {
 public:
-  MtEncoder(void *device, int64_t luid, int32_t width, int32_t height,
-            int32_t kbs, int32_t framerate, int32_t gop)
+  MtEncoder(void *device, int64_t luid, int32_t data_format, int32_t width,
+            int32_t height, int32_t kbs, int32_t framerate, int32_t gop)
       : device_(static_cast<ID3D11Device *>(device)), luid_(luid),
-        width_(width), height_(height), kbs_(kbs), framerate_(framerate),
-        gop_(gop) {}
+        data_format_(data_format), width_(width), height_(height), kbs_(kbs),
+        framerate_(framerate), gop_(gop) {}
 
   ~MtEncoder() { destroy(); }
 
@@ -138,19 +138,25 @@ public:
     mtapi::PresetConfig preset = {};
     preset.version = mtapi::API_VERSION;
     preset.preset.version = mtapi::API_VERSION;
-    status = api_.get_preset_config(encoder_, mtapi::CODEC_H264,
-                                    mtapi::PRESET_DEFAULT, &preset);
+    uint32_t codec_id =
+        data_format_ == H265 ? mtapi::CODEC_HEVC : mtapi::CODEC_H264;
+    status = api_.get_preset_config(encoder_, codec_id, mtapi::PRESET_DEFAULT,
+                                    &preset);
     if (status != mtapi::SUCCESS) {
       log_status("mtEncGetPresetConfig", status);
       return false;
     }
 
     config_ = preset.preset;
-    configure_h264();
+    if (data_format_ == H265) {
+      configure_hevc();
+    } else {
+      configure_h264();
+    }
 
     init_params_ = {};
     init_params_.version = mtapi::API_VERSION;
-    init_params_.encode_id = mtapi::CODEC_H264;
+    init_params_.encode_id = codec_id;
     init_params_.preset_id = mtapi::PRESET_DEFAULT;
     init_params_.encode_width = static_cast<uint32_t>(width_);
     init_params_.encode_height = static_cast<uint32_t>(height_);
@@ -290,10 +296,7 @@ private:
     config_.version = mtapi::API_VERSION;
     config_.profile_id = mtapi::PROFILE_MAIN_H264;
     config_.frame_interval_p = 1;
-    config_.gop_length =
-        gop_ > 0 && gop_ < static_cast<int32_t>(mtapi::INFINITE_GOP_LENGTH)
-            ? static_cast<uint32_t>(gop_)
-            : mtapi::INFINITE_GOP_LENGTH;
+    config_.gop_length = gop_length();
     config_.repeat_headers = 1;
     config_.rc.version = mtapi::API_VERSION;
     config_.rc.rate_control_mode = mtapi::RC_CBR;
@@ -302,13 +305,41 @@ private:
     mtapi::H264Config &h264 = config_.codec.h264;
     h264.level = mtapi::LEVEL_AUTOSELECT;
     h264.idr_period = config_.gop_length;
-    h264.vui.video_signal_type_present = 1;
-    h264.vui.video_format = mtapi::VUI_VIDEO_FORMAT_COMPONENT;
-    h264.vui.video_full_range = 0;
-    h264.vui.colour_description_present = 1;
-    h264.vui.colour_primaries = mtapi::VUI_COLOR_SMPTE170M;
-    h264.vui.transfer_characteristics = mtapi::VUI_COLOR_SMPTE170M;
-    h264.vui.colour_matrix = mtapi::VUI_COLOR_SMPTE170M;
+    configure_vui(h264.vui);
+  }
+
+  void configure_hevc() {
+    config_.version = mtapi::API_VERSION;
+    config_.profile_id = mtapi::PROFILE_MAIN_HEVC;
+    config_.frame_interval_p = 1;
+    config_.gop_length = gop_length();
+    config_.repeat_headers = 1;
+    config_.rc.version = mtapi::API_VERSION;
+    config_.rc.rate_control_mode = mtapi::RC_CBR;
+    set_rate_control(kbs_);
+
+    mtapi::HevcConfig &hevc = config_.codec.hevc;
+    hevc.level = mtapi::LEVEL_AUTOSELECT;
+    hevc.tier = mtapi::TIER_HEVC_MAIN;
+    hevc.idr_period = config_.gop_length;
+    hevc.pixel_bit_depth_and_reserved = 0;
+    configure_vui(hevc.vui);
+  }
+
+  uint32_t gop_length() {
+    return gop_ > 0 && gop_ < static_cast<int32_t>(mtapi::INFINITE_GOP_LENGTH)
+               ? static_cast<uint32_t>(gop_)
+               : mtapi::INFINITE_GOP_LENGTH;
+  }
+
+  void configure_vui(mtapi::H264VuiParams &vui) {
+    vui.video_signal_type_present = 1;
+    vui.video_format = mtapi::VUI_VIDEO_FORMAT_COMPONENT;
+    vui.video_full_range = 0;
+    vui.colour_description_present = 1;
+    vui.colour_primaries = mtapi::VUI_COLOR_SMPTE170M;
+    vui.transfer_characteristics = mtapi::VUI_COLOR_SMPTE170M;
+    vui.colour_matrix = mtapi::VUI_COLOR_SMPTE170M;
   }
 
   void set_rate_control(int32_t kbs) {
@@ -491,6 +522,7 @@ private:
 private:
   ID3D11Device *device_ = nullptr;
   int64_t luid_ = 0;
+  int32_t data_format_ = H264;
   int32_t width_ = 0;
   int32_t height_ = 0;
   int32_t kbs_ = 0;
@@ -531,13 +563,13 @@ int mt_encode_driver_support() {
 void *mt_new_encoder(void *device, int64_t luid, int32_t data_format,
                      int32_t width, int32_t height, int32_t kbs,
                      int32_t framerate, int32_t gop) {
-  if (data_format != H264) {
+  if (data_format != H264 && data_format != H265) {
     return nullptr;
   }
   try {
     auto encoder =
-        std::make_unique<MtEncoder>(device, luid, width, height, kbs,
-                                    framerate, gop);
+        std::make_unique<MtEncoder>(device, luid, data_format, width, height,
+                                    kbs, framerate, gop);
     if (!encoder->init()) {
       return nullptr;
     }
@@ -585,7 +617,7 @@ int mt_test_encode(int64_t *out_luids, int32_t *out_vendors,
                    const int64_t *excluded_luids,
                    const int32_t *exclude_formats, int32_t exclude_count) {
   if (!out_luids || !out_vendors || !out_desc_num || max_desc_num <= 0 ||
-      data_format != H264) {
+      (data_format != H264 && data_format != H265)) {
     return -1;
   }
   *out_desc_num = 0;
