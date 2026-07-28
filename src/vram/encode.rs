@@ -93,7 +93,10 @@ impl Encoder {
     pub fn set_bitrate(&mut self, kbs: i32) -> Result<(), i32> {
         unsafe {
             match (self.calls.set_bitrate)(self.codec, kbs) {
-                0 => Ok(()),
+                0 => {
+                    self.ctx.d.kbitrate = kbs;
+                    Ok(())
+                }
                 err => Err(err),
             }
         }
@@ -102,7 +105,10 @@ impl Encoder {
     pub fn set_framerate(&mut self, framerate: i32) -> Result<(), i32> {
         unsafe {
             match (self.calls.set_framerate)(self.codec, framerate) {
-                0 => Ok(()),
+                0 => {
+                    self.ctx.d.framerate = framerate;
+                    Ok(())
+                }
                 err => Err(err),
             }
         }
@@ -110,7 +116,10 @@ impl Encoder {
 
     pub fn reinit(&mut self) -> bool {
         unsafe {
-            (self.calls.destroy)(self.codec);
+            if !self.codec.is_null() {
+                (self.calls.destroy)(self.codec);
+                self.codec = std::ptr::null_mut();
+            }
             self.codec = (self.calls.new)(
                 self.ctx.d.device.unwrap_or(std::ptr::null_mut()),
                 self.ctx.f.luid,
