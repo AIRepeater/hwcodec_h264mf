@@ -3,6 +3,8 @@ use crate::{
     ffmpeg::init_av_log,
     vram::{amf, ffmpeg, inner::DecodeCalls, mfx, nv, DecodeContext},
 };
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+use crate::vram::mt;
 use log::trace;
 use std::ffi::c_void;
 
@@ -32,7 +34,8 @@ impl Decoder {
             AMF => amf::decode_calls(),
             MFX => mfx::decode_calls(),
             FFMPEG => ffmpeg::decode_calls(),
-            MT => return Err(()),
+            #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+            MT => mt::decode_calls(),
         };
         unsafe {
             let codec = (calls.new)(
@@ -132,6 +135,13 @@ pub fn available() -> Vec<DecodeContext> {
             .map(|n| (MFX, n))
             .collect(),
     );
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    codecs.append(
+        &mut mt::possible_support_decoders()
+            .drain(..)
+            .map(|n| (MT, n))
+            .collect(),
+    );
 
     let inputs: Vec<DecodeContext> = codecs
         .drain(..)
@@ -160,7 +170,8 @@ pub fn available() -> Vec<DecodeContext> {
             AMF => amf::decode_calls().test,
             MFX => mfx::decode_calls().test,
             FFMPEG => ffmpeg::decode_calls().test,
-            MT => continue,
+            #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+            MT => mt::decode_calls().test,
         };
 
         let mut luids: Vec<i64> = vec![0; crate::vram::MAX_ADATERS];

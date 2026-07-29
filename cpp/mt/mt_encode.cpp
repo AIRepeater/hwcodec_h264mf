@@ -1,5 +1,3 @@
-#include "mt_ffi.h"
-
 #include "mt_encode_api.h"
 
 #include <algorithm>
@@ -15,14 +13,15 @@
 #include <windows.h>
 #include <wrl/client.h>
 
+using Microsoft::WRL::ComPtr;
+
+#include "callback.h"
 #include "common.h"
 #include "system.h"
 #include "util.h"
 
 #define LOG_MODULE "MTENC"
 #include "log.h"
-
-using Microsoft::WRL::ComPtr;
 
 namespace {
 
@@ -33,37 +32,37 @@ void log_status(const char *operation, mtapi::Status status) {
             std::to_string(status));
 }
 
-bool load_api(HMODULE &module, mtapi::FunctionList &api, bool log_errors) {
+bool load_api(HMODULE &module, mtapi::FunctionList &api, bool logErrors) {
   module = LoadLibraryW(L"mtencodeapi64.dll");
   if (!module) {
-    if (log_errors) {
+    if (logErrors) {
       LOG_ERROR(std::string("LoadLibrary(mtencodeapi64.dll) failed, error=") +
                 std::to_string(GetLastError()));
     }
     return false;
   }
 
-  auto get_max_supported_version =
+  auto getMaxSupportedVersion =
       reinterpret_cast<mtapi::GetMaxSupportedVersionFn>(
           GetProcAddress(module, "MTEncodeAPIGetMaxSupportedVersion"));
-  auto create_instance = reinterpret_cast<mtapi::CreateInstanceFn>(
+  auto createInstance = reinterpret_cast<mtapi::CreateInstanceFn>(
       GetProcAddress(module, "MTEncodeAPICreateInstance"));
-  if (!get_max_supported_version || !create_instance) {
-    if (log_errors) {
-      LOG_ERROR(std::string("Required MTEncode API exports are missing"));
+  if (!getMaxSupportedVersion || !createInstance) {
+    if (logErrors) {
+      LOG_ERROR(std::string("mt api exports missing"));
     }
     FreeLibrary(module);
     module = nullptr;
     return false;
   }
 
-  uint32_t max_supported_version = 0;
-  mtapi::Status status = get_max_supported_version(&max_supported_version);
+  uint32_t maxSupportedVersion = 0;
+  mtapi::Status status = getMaxSupportedVersion(&maxSupportedVersion);
   if (status != mtapi::SUCCESS ||
-      max_supported_version < mtapi::API_VERSION) {
-    if (log_errors) {
-      LOG_ERROR(std::string("MTEncode API version 0x01020000 is not supported; ") +
-                "driver maximum=" + std::to_string(max_supported_version) +
+      maxSupportedVersion < mtapi::API_VERSION) {
+    if (logErrors) {
+      LOG_ERROR(std::string("mt api version 0x01020000 is not supported; ") +
+                "driver maximum=" + std::to_string(maxSupportedVersion) +
                 ", status=" + std::to_string(status));
     }
     FreeLibrary(module);
@@ -73,7 +72,7 @@ bool load_api(HMODULE &module, mtapi::FunctionList &api, bool log_errors) {
 
   api = {};
   api.version = mtapi::API_VERSION;
-  status = create_instance(&api);
+  status = createInstance(&api);
   if (status != mtapi::SUCCESS || !api.create_encoder ||
       !api.get_preset_config || !api.init_encoder ||
       !api.create_output_buffer || !api.release_output_buffer ||
@@ -81,8 +80,8 @@ bool load_api(HMODULE &module, mtapi::FunctionList &api, bool log_errors) {
       !api.unlock_output_buffer || !api.map_resource ||
       !api.unmap_resource || !api.release_encoder ||
       !api.reconfigure_encoder) {
-    if (log_errors) {
-      LOG_ERROR(std::string("MTEncode function table is incomplete, status=") +
+    if (logErrors) {
+      LOG_ERROR(std::string("mt function table incomplete, status=") +
                 std::to_string(status));
     }
     api = {};
@@ -96,10 +95,10 @@ bool load_api(HMODULE &module, mtapi::FunctionList &api, bool log_errors) {
 
 class MtEncoder {
 public:
-  MtEncoder(void *device, int64_t luid, int32_t data_format, int32_t width,
+  MtEncoder(void *device, int64_t luid, DataFormat dataFormat, int32_t width,
             int32_t height, int32_t kbs, int32_t framerate, int32_t gop)
       : device_(static_cast<ID3D11Device *>(device)), luid_(luid),
-        data_format_(data_format), width_(width), height_(height), kbs_(kbs),
+        dataFormat_(dataFormat), width_(width), height_(height), kbs_(kbs),
         framerate_(framerate), gop_(gop) {}
 
   ~MtEncoder() { destroy(); }
@@ -107,7 +106,7 @@ public:
   bool init() {
     if (width_ <= 0 || height_ <= 0 || width_ % 2 != 0 || height_ % 2 != 0 ||
         kbs_ <= 0 || framerate_ <= 0) {
-      LOG_ERROR(std::string("Invalid MTEncode dimensions or rate settings"));
+      LOG_ERROR(std::string("mt invalid dimensions or rate settings"));
       return false;
     }
 
@@ -117,19 +116,19 @@ public:
 
     native_ = std::make_unique<NativeDevice>();
     if (!native_->Init(luid_, device_)) {
-      LOG_ERROR(std::string("Failed to create the MT D3D11 device context"));
+      LOG_ERROR(std::string("mt create d3d11 device context failed"));
       return false;
     }
     if (native_->GetVendor() != ADAPTER_VENDOR_MT) {
-      LOG_ERROR(std::string("The selected D3D11 device is not a Moore Threads adapter"));
+      LOG_ERROR(std::string("mt device is not a Moore Threads adapter"));
       return false;
     }
 
-    mtapi::CreateEncoderParams create_params = {};
-    create_params.version = mtapi::API_VERSION;
-    create_params.device_type = mtapi::DEVICE_DIRECTX;
-    create_params.device = native_->device_.Get();
-    mtapi::Status status = api_.create_encoder(&create_params, &encoder_);
+    mtapi::CreateEncoderParams createParams = {};
+    createParams.version = mtapi::API_VERSION;
+    createParams.device_type = mtapi::DEVICE_DIRECTX;
+    createParams.device = native_->device_.Get();
+    mtapi::Status status = api_.create_encoder(&createParams, &encoder_);
     if (status != mtapi::SUCCESS || !encoder_) {
       log_status("mtEncCreateEncoder", status);
       return false;
@@ -138,9 +137,9 @@ public:
     mtapi::PresetConfig preset = {};
     preset.version = mtapi::API_VERSION;
     preset.preset.version = mtapi::API_VERSION;
-    uint32_t codec_id =
-        data_format_ == H265 ? mtapi::CODEC_HEVC : mtapi::CODEC_H264;
-    status = api_.get_preset_config(encoder_, codec_id, mtapi::PRESET_DEFAULT,
+    uint32_t codecId =
+        dataFormat_ == H265 ? mtapi::CODEC_HEVC : mtapi::CODEC_H264;
+    status = api_.get_preset_config(encoder_, codecId, mtapi::PRESET_DEFAULT,
                                     &preset);
     if (status != mtapi::SUCCESS) {
       log_status("mtEncGetPresetConfig", status);
@@ -148,26 +147,26 @@ public:
     }
 
     config_ = preset.preset;
-    if (data_format_ == H265) {
+    if (dataFormat_ == H265) {
       configure_hevc();
     } else {
       configure_h264();
     }
 
-    init_params_ = {};
-    init_params_.version = mtapi::API_VERSION;
-    init_params_.encode_id = codec_id;
-    init_params_.preset_id = mtapi::PRESET_DEFAULT;
-    init_params_.encode_width = static_cast<uint32_t>(width_);
-    init_params_.encode_height = static_cast<uint32_t>(height_);
-    init_params_.frame_rate_num = static_cast<uint32_t>(framerate_);
-    init_params_.frame_rate_den = 1;
-    init_params_.enable_encode_async = 1;
-    init_params_.encode_config = &config_;
-    init_params_.max_encode_width = static_cast<uint32_t>(width_);
-    init_params_.max_encode_height = static_cast<uint32_t>(height_);
+    initParams_ = {};
+    initParams_.version = mtapi::API_VERSION;
+    initParams_.encode_id = codecId;
+    initParams_.preset_id = mtapi::PRESET_DEFAULT;
+    initParams_.encode_width = static_cast<uint32_t>(width_);
+    initParams_.encode_height = static_cast<uint32_t>(height_);
+    initParams_.frame_rate_num = static_cast<uint32_t>(framerate_);
+    initParams_.frame_rate_den = 1;
+    initParams_.enable_encode_async = 1;
+    initParams_.encode_config = &config_;
+    initParams_.max_encode_width = static_cast<uint32_t>(width_);
+    initParams_.max_encode_height = static_cast<uint32_t>(height_);
 
-    status = api_.init_encoder(encoder_, &init_params_);
+    status = api_.init_encoder(encoder_, &initParams_);
     if (status != mtapi::SUCCESS) {
       log_status("mtEncInitEncoder", status);
       return false;
@@ -186,30 +185,30 @@ public:
       return -1;
     }
 
-    size_t slot = next_slot_;
-    if (mapped_resources_[slot]) {
-      LOG_ERROR(std::string("MTEncode input slot is still mapped"));
+    size_t slot = nextSlot_;
+    if (mappedResources_[slot]) {
+      LOG_ERROR(std::string("mt encode input slot still mapped"));
       return -1;
     }
 
     auto source = static_cast<ID3D11Texture2D *>(texture);
-    if (!native_->BgraToNv12(source, input_textures_[slot].Get(), width_,
+    if (!native_->BgraToNv12(source, inputTextures_[slot].Get(), width_,
                              height_, DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709,
                              DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P601)) {
-      LOG_ERROR(std::string("Failed to convert the captured texture to NV12"));
+      LOG_ERROR(std::string("mt convert texture to NV12 failed"));
       return -1;
     }
 
     mtapi::MapResource map = {};
     map.version = mtapi::API_VERSION;
     map.resource_type = mtapi::RESOURCE_DIRECTX;
-    map.resource_to_map = input_textures_[slot].Get();
+    map.resource_to_map = inputTextures_[slot].Get();
     mtapi::Status status = api_.map_resource(encoder_, &map);
     if (status != mtapi::SUCCESS || !map.mapped_resource) {
       log_status("mtEncMapResource", status);
       return -1;
     }
-    mapped_resources_[slot] = map.mapped_resource;
+    mappedResources_[slot] = map.mapped_resource;
     timestamps_[slot] = ms;
 
     ResetEvent(events_[slot]);
@@ -220,7 +219,7 @@ public:
     picture.input_pitch = static_cast<uint32_t>(width_);
     picture.buffer_format = mtapi::BUFFER_FORMAT_NV12;
     picture.input_buffer = map.mapped_resource;
-    picture.output_buffer = output_buffers_[slot];
+    picture.output_buffer = outputBuffers_[slot];
     picture.completion_event = events_[slot];
     picture.input_timestamp = static_cast<uint64_t>(ms);
     picture.input_duration = static_cast<uint64_t>(1000 / framerate_);
@@ -237,7 +236,7 @@ public:
     }
 
     pending_.push_back(slot);
-    next_slot_ = (next_slot_ + 1) % BUFFER_COUNT;
+    nextSlot_ = (nextSlot_ + 1) % BUFFER_COUNT;
     if (status == mtapi::ERR_NEED_MORE_INPUT) {
       LOG_WARN(std::string("mtEncEncodeFrame returned ERR_NEED_MORE_INPUT in IPPP mode"));
       return -2;
@@ -251,15 +250,15 @@ public:
       return -1;
     }
     if (!pending_.empty()) {
-      LOG_WARN(std::string("set_bitrate skipped: pending frames not empty"));
+      LOG_WARN(std::string("mt set_bitrate skipped: pending not empty"));
       return -1;
     }
-    uint32_t old_average = config_.rc.average_bit_rate;
-    uint32_t old_max = config_.rc.max_bit_rate;
+    uint32_t oldAverage = config_.rc.average_bit_rate;
+    uint32_t oldMax = config_.rc.max_bit_rate;
     set_rate_control(kbs);
     if (!reconfigure()) {
-      config_.rc.average_bit_rate = old_average;
-      config_.rc.max_bit_rate = old_max;
+      config_.rc.average_bit_rate = oldAverage;
+      config_.rc.max_bit_rate = oldMax;
       return -1;
     }
     kbs_ = kbs;
@@ -271,13 +270,13 @@ public:
       return -1;
     }
     if (!pending_.empty()) {
-      LOG_WARN(std::string("set_framerate skipped: pending frames not empty"));
+      LOG_WARN(std::string("mt set_framerate skipped: pending not empty"));
       return -1;
     }
-    uint32_t old_framerate = init_params_.frame_rate_num;
-    init_params_.frame_rate_num = static_cast<uint32_t>(framerate);
+    uint32_t oldFramerate = initParams_.frame_rate_num;
+    initParams_.frame_rate_num = static_cast<uint32_t>(framerate);
     if (!reconfigure()) {
-      init_params_.frame_rate_num = old_framerate;
+      initParams_.frame_rate_num = oldFramerate;
       return -1;
     }
     framerate_ = framerate;
@@ -350,27 +349,27 @@ private:
   }
 
   bool allocate_buffers() {
-    input_textures_.resize(BUFFER_COUNT);
-    output_buffers_.assign(BUFFER_COUNT, nullptr);
-    mapped_resources_.assign(BUFFER_COUNT, nullptr);
+    inputTextures_.resize(BUFFER_COUNT);
+    outputBuffers_.assign(BUFFER_COUNT, nullptr);
+    mappedResources_.assign(BUFFER_COUNT, nullptr);
     events_.assign(BUFFER_COUNT, nullptr);
     timestamps_.assign(BUFFER_COUNT, 0);
 
-    D3D11_TEXTURE2D_DESC texture_desc = {};
-    texture_desc.Width = static_cast<UINT>(width_);
-    texture_desc.Height = static_cast<UINT>(height_);
-    texture_desc.MipLevels = 1;
-    texture_desc.ArraySize = 1;
-    texture_desc.Format = DXGI_FORMAT_NV12;
-    texture_desc.SampleDesc.Count = 1;
-    texture_desc.Usage = D3D11_USAGE_DEFAULT;
-    texture_desc.BindFlags = D3D11_BIND_RENDER_TARGET |
+    D3D11_TEXTURE2D_DESC textureDesc = {};
+    textureDesc.Width = static_cast<UINT>(width_);
+    textureDesc.Height = static_cast<UINT>(height_);
+    textureDesc.MipLevels = 1;
+    textureDesc.ArraySize = 1;
+    textureDesc.Format = DXGI_FORMAT_NV12;
+    textureDesc.SampleDesc.Count = 1;
+    textureDesc.Usage = D3D11_USAGE_DEFAULT;
+    textureDesc.BindFlags = D3D11_BIND_RENDER_TARGET |
                              D3D11_BIND_SHADER_RESOURCE |
                              D3D11_BIND_VIDEO_ENCODER;
 
     for (size_t i = 0; i < BUFFER_COUNT; ++i) {
       HRESULT hr = native_->device_->CreateTexture2D(
-          &texture_desc, nullptr, input_textures_[i].ReleaseAndGetAddressOf());
+          &textureDesc, nullptr, inputTextures_[i].ReleaseAndGetAddressOf());
       if (FAILED(hr)) {
         LOG_ERROR(std::string("CreateTexture2D(NV12) failed, hr=") +
                   std::to_string(hr));
@@ -384,7 +383,7 @@ private:
         log_status("mtEncCreateOutputBuffer", status);
         return false;
       }
-      output_buffers_[i] = output.output_buffer;
+      outputBuffers_[i] = output.output_buffer;
 
       events_[i] = CreateEventW(nullptr, FALSE, FALSE, nullptr);
       if (!events_[i]) {
@@ -402,10 +401,10 @@ private:
     }
 
     size_t slot = pending_.front();
-    DWORD wait_result = WaitForSingleObject(events_[slot], ENCODE_TIMEOUT_MS);
-    if (wait_result != WAIT_OBJECT_0) {
-      LOG_ERROR(std::string("Waiting for MTEncode completion failed, result=") +
-                std::to_string(wait_result));
+    DWORD waitResult = WaitForSingleObject(events_[slot], ENCODE_TIMEOUT_MS);
+    if (waitResult != WAIT_OBJECT_0) {
+      LOG_ERROR(std::string("mt encode wait completion failed, result=") +
+                std::to_string(waitResult));
       unmap_slot(slot);
       pending_.pop_front();
       return -2;
@@ -450,20 +449,20 @@ private:
   }
 
   void unmap_slot(size_t slot) {
-    if (slot < mapped_resources_.size() && mapped_resources_[slot]) {
+    if (slot < mappedResources_.size() && mappedResources_[slot]) {
       mtapi::Status status =
-          api_.unmap_resource(encoder_, mapped_resources_[slot]);
+          api_.unmap_resource(encoder_, mappedResources_[slot]);
       if (status != mtapi::SUCCESS) {
         log_status("mtEncUnmapResource", status);
       }
-      mapped_resources_[slot] = nullptr;
+      mappedResources_[slot] = nullptr;
     }
   }
 
   bool reconfigure() {
     mtapi::ReconfigureParams params = {};
     params.version = mtapi::API_VERSION;
-    params.reinit_params = init_params_;
+    params.reinit_params = initParams_;
     params.reinit_params.encode_config = &config_;
     mtapi::Status status = api_.reconfigure_encoder(encoder_, &params);
     if (status != mtapi::SUCCESS) {
@@ -483,19 +482,19 @@ private:
     }
 
     if (encoder_ && api_.unmap_resource) {
-      for (size_t i = 0; i < mapped_resources_.size(); ++i) {
+      for (size_t i = 0; i < mappedResources_.size(); ++i) {
         unmap_slot(i);
       }
     }
 
     if (encoder_ && api_.release_output_buffer) {
-      for (void *output : output_buffers_) {
+      for (void *output : outputBuffers_) {
         if (output) {
           api_.release_output_buffer(encoder_, output);
         }
       }
     }
-    output_buffers_.clear();
+    outputBuffers_.clear();
 
     for (HANDLE event : events_) {
       if (event) {
@@ -503,7 +502,7 @@ private:
       }
     }
     events_.clear();
-    input_textures_.clear();
+    inputTextures_.clear();
 
     if (encoder_ && api_.release_encoder) {
       api_.release_encoder(encoder_);
@@ -522,7 +521,7 @@ private:
 private:
   ID3D11Device *device_ = nullptr;
   int64_t luid_ = 0;
-  int32_t data_format_ = H264;
+  DataFormat dataFormat_ = H264;
   int32_t width_ = 0;
   int32_t height_ = 0;
   int32_t kbs_ = 0;
@@ -534,15 +533,15 @@ private:
   void *encoder_ = nullptr;
   std::unique_ptr<NativeDevice> native_;
   mtapi::Config config_ = {};
-  mtapi::InitParams init_params_ = {};
+  mtapi::InitParams initParams_ = {};
 
-  std::vector<ComPtr<ID3D11Texture2D>> input_textures_;
-  std::vector<void *> output_buffers_;
-  std::vector<void *> mapped_resources_;
+  std::vector<ComPtr<ID3D11Texture2D>> inputTextures_;
+  std::vector<void *> outputBuffers_;
+  std::vector<void *> mappedResources_;
   std::vector<HANDLE> events_;
   std::vector<int64_t> timestamps_;
   std::deque<size_t> pending_;
-  size_t next_slot_ = 0;
+  size_t nextSlot_ = 0;
   bool initialized_ = false;
 };
 
@@ -560,24 +559,24 @@ int mt_encode_driver_support() {
   return 0;
 }
 
-void *mt_new_encoder(void *device, int64_t luid, int32_t data_format,
+void *mt_new_encoder(void *device, int64_t luid, DataFormat dataFormat,
                      int32_t width, int32_t height, int32_t kbs,
                      int32_t framerate, int32_t gop) {
-  if (data_format != H264 && data_format != H265) {
+  if (dataFormat != H264 && dataFormat != H265) {
     return nullptr;
   }
   try {
     auto encoder =
-        std::make_unique<MtEncoder>(device, luid, data_format, width, height,
+        std::make_unique<MtEncoder>(device, luid, dataFormat, width, height,
                                     kbs, framerate, gop);
     if (!encoder->init()) {
       return nullptr;
     }
     return encoder.release();
   } catch (const std::exception &e) {
-    LOG_ERROR(std::string("Creating MTEncode encoder failed: ") + e.what());
+    LOG_ERROR(std::string("mt new encoder failed: ") + e.what());
   } catch (...) {
-    LOG_ERROR(std::string("Creating MTEncode encoder failed"));
+    LOG_ERROR(std::string("mt new encoder failed"));
   }
   return nullptr;
 }
@@ -591,9 +590,9 @@ int mt_encode(void *encoder, void *texture, EncodeCallback callback, void *obj,
     return static_cast<MtEncoder *>(encoder)->encode(texture, callback, obj,
                                                       ms);
   } catch (const std::exception &e) {
-    LOG_ERROR(std::string("MTEncode frame failed: ") + e.what());
+    LOG_ERROR(std::string("mt encode frame failed: ") + e.what());
   } catch (...) {
-    LOG_ERROR(std::string("MTEncode frame failed"));
+    LOG_ERROR(std::string("mt encode frame failed"));
   }
   return -1;
 }
@@ -603,24 +602,24 @@ int mt_destroy_encoder(void *encoder) {
     delete static_cast<MtEncoder *>(encoder);
     return 0;
   } catch (const std::exception &e) {
-    LOG_ERROR(std::string("Destroying MTEncode encoder failed: ") + e.what());
+    LOG_ERROR(std::string("mt destroy encoder failed: ") + e.what());
   } catch (...) {
-    LOG_ERROR(std::string("Destroying MTEncode encoder failed"));
+    LOG_ERROR(std::string("mt destroy encoder failed"));
   }
   return -1;
 }
 
-int mt_test_encode(int64_t *out_luids, int32_t *out_vendors,
-                   int32_t max_desc_num, int32_t *out_desc_num,
-                   int32_t data_format, int32_t width, int32_t height,
+int mt_test_encode(int64_t *outLuids, int32_t *outVendors,
+                   int32_t maxDescNum, int32_t *outDescNum,
+                   DataFormat dataFormat, int32_t width, int32_t height,
                    int32_t kbs, int32_t framerate, int32_t gop,
-                   const int64_t *excluded_luids,
-                   const int32_t *exclude_formats, int32_t exclude_count) {
-  if (!out_luids || !out_vendors || !out_desc_num || max_desc_num <= 0 ||
-      (data_format != H264 && data_format != H265)) {
+                   const int64_t *excludedLuids,
+                   const int32_t *excludeFormats, int32_t excludeCount) {
+  if (!outLuids || !outVendors || !outDescNum || maxDescNum <= 0 ||
+      (dataFormat != H264 && dataFormat != H265)) {
     return -1;
   }
-  *out_desc_num = 0;
+  *outDescNum = 0;
 
   try {
     Adapters adapters;
@@ -631,13 +630,13 @@ int mt_test_encode(int64_t *out_luids, int32_t *out_vendors,
     int32_t count = 0;
     for (auto &adapter : adapters.adapters_) {
       int64_t luid = LUID(adapter->desc1_);
-      if (util::skip_test(excluded_luids, exclude_formats, exclude_count,
-                          luid, data_format)) {
+      if (util::skip_test(excludedLuids, excludeFormats, excludeCount,
+                          luid, dataFormat)) {
         continue;
       }
 
       std::unique_ptr<MtEncoder> encoder(static_cast<MtEncoder *>(
-          mt_new_encoder(adapter->device_.Get(), luid, data_format, width,
+          mt_new_encoder(adapter->device_.Get(), luid, dataFormat, width,
                          height, kbs, framerate, gop)));
       if (!encoder) {
         continue;
@@ -658,21 +657,21 @@ int mt_test_encode(int64_t *out_luids, int32_t *out_vendors,
       }
       int64_t elapsed = util::elapsed_ms(start);
       if (key == 1 && elapsed < TEST_TIMEOUT_MS) {
-        out_luids[count] = luid;
-        out_vendors[count] = VENDOR_MT;
+        outLuids[count] = luid;
+        outVendors[count] = VENDOR_MT;
         ++count;
       }
-      if (count >= max_desc_num) {
+      if (count >= maxDescNum) {
         break;
       }
     }
 
-    *out_desc_num = count;
+    *outDescNum = count;
     return 0;
   } catch (const std::exception &e) {
-    LOG_ERROR(std::string("Testing MTEncode failed: ") + e.what());
+    LOG_ERROR(std::string("mt test encode failed: ") + e.what());
   } catch (...) {
-    LOG_ERROR(std::string("Testing MTEncode failed"));
+    LOG_ERROR(std::string("mt test encode failed"));
   }
   return -1;
 }

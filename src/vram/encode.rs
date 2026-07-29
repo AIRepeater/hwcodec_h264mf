@@ -35,8 +35,6 @@ impl Encoder {
             FFMPEG => ffmpeg::encode_calls(),
             #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
             MT => mt::encode_calls(),
-            #[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
-            MT => return Err(()),
         };
         unsafe {
             let codec = (calls.new)(
@@ -222,8 +220,6 @@ pub fn available(d: DynamicContext) -> Vec<FeatureContext> {
             FFMPEG => ffmpeg::encode_calls().test,
             #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
             MT => mt::encode_calls().test,
-            #[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
-            MT => continue,
         };
 
         let mut luids: Vec<i64> = vec![0; crate::vram::MAX_ADATERS];
