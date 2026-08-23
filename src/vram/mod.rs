@@ -10,6 +10,10 @@ pub(crate) mod nv;
 
 pub(crate) const MAX_ADATERS: usize = 16;
 
+// Keep in sync with ENCODE_RETRY_LATER in cpp/mt/mt_encode.cpp. Returned by
+// encode() on a recoverable no-frame condition, e.g. encoder busy.
+pub const ENCODE_RETRY_LATER: i32 = -2;
+
 use crate::common::{DataFormat, Driver};
 pub use serde;
 pub use serde_derive;

@@ -26,6 +26,9 @@ using Microsoft::WRL::ComPtr;
 namespace {
 
 constexpr size_t BUFFER_COUNT = 3;
+// Keep in sync with ENCODE_RETRY_LATER in src/vram/mod.rs.
+constexpr int32_t ENCODE_RETRY_LATER = -2;
+constexpr int32_t TEST_RETRY_TIMES = 3;
 
 void log_status(const char *operation, mtapi::Status status) {
   LOG_ERROR(std::string(operation) + " failed, status=" +
@@ -181,8 +184,11 @@ public:
   }
 
   int encode(void *texture, EncodeCallback callback, void *obj, int64_t ms) {
-    if (!initialized_ || !texture || pending_.size() >= BUFFER_COUNT) {
+    if (!initialized_ || !texture) {
       return -1;
+    }
+    if (pending_.size() >= BUFFER_COUNT) {
+      return ENCODE_RETRY_LATER;
     }
 
     size_t slot = nextSlot_;
@@ -227,7 +233,7 @@ public:
     status = api_.encode_frame(encoder_, &picture);
     if (status == mtapi::ERR_ENCODER_BUSY) {
       unmap_slot(slot);
-      return -2;
+      return ENCODE_RETRY_LATER;
     }
     if (status != mtapi::SUCCESS && status != mtapi::ERR_NEED_MORE_INPUT) {
       log_status("mtEncEncodeFrame", status);
@@ -239,7 +245,7 @@ public:
     nextSlot_ = (nextSlot_ + 1) % BUFFER_COUNT;
     if (status == mtapi::ERR_NEED_MORE_INPUT) {
       LOG_WARN(std::string("mtEncEncodeFrame returned ERR_NEED_MORE_INPUT in IPPP mode"));
-      return -2;
+      return ENCODE_RETRY_LATER;
     }
 
     return collect_one(callback, obj);
@@ -397,7 +403,7 @@ private:
 
   int collect_one(EncodeCallback callback, void *obj) {
     if (pending_.empty()) {
-      return -2;
+      return ENCODE_RETRY_LATER;
     }
 
     size_t slot = pending_.front();
@@ -407,7 +413,7 @@ private:
                 std::to_string(waitResult));
       unmap_slot(slot);
       pending_.pop_front();
-      return -2;
+      return ENCODE_RETRY_LATER;
     }
 
     mtapi::LockBuffer lock = {};
@@ -418,10 +424,10 @@ private:
       log_status("mtEncLockOutputBuffer", status);
       unmap_slot(slot);
       pending_.pop_front();
-      return -2;
+      return ENCODE_RETRY_LATER;
     }
 
-    int result = -2;
+    int result = ENCODE_RETRY_LATER;
     if (lock.output_buffer_ptr && lock.output_size > 0 &&
         lock.output_size <= static_cast<uint32_t>(
                                 std::numeric_limits<int32_t>::max())) {
@@ -649,9 +655,18 @@ int mt_test_encode(int64_t *outLuids, int32_t *outVendors,
 
       int32_t key = 0;
       auto start = util::now();
+      int retries = 0;
       for (int i = 0; i < static_cast<int>(BUFFER_COUNT) && key != 1; ++i) {
-        if (encoder->encode(texture, util_encode::vram_encode_test_callback,
-                            &key, i) != 0) {
+        int result = encoder->encode(texture,
+                                     util_encode::vram_encode_test_callback,
+                                     &key, i);
+        if (result == ENCODE_RETRY_LATER && ++retries <= TEST_RETRY_TIMES) {
+          // transient no-frame, e.g. encoder busy
+          Sleep(10);
+          --i;
+          continue;
+        }
+        if (result != 0) {
           break;
         }
       }
